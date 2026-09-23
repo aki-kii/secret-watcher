@@ -1,0 +1,361 @@
+{
+  "manifestVersion": 3,
+  "env": {
+    "PATH": "$(pnpm -c exec \"node --print process.env.PATH\")"
+  },
+  "tasks": {
+    "build": {
+      "name": "build",
+      "description": "Full release build",
+      "steps": [
+        {
+          "spawn": "default"
+        },
+        {
+          "spawn": "pre-compile"
+        },
+        {
+          "spawn": "compile"
+        },
+        {
+          "spawn": "post-compile"
+        },
+        {
+          "spawn": "test"
+        },
+        {
+          "spawn": "package"
+        }
+      ]
+    },
+    "bundle": {
+      "name": "bundle",
+      "description": "Prepare assets",
+      "steps": [
+        {
+          "spawn": "bundle:handler/secret-watcher"
+        }
+      ]
+    },
+    "bundle:handler/secret-watcher": {
+      "name": "bundle:handler/secret-watcher",
+      "description": "Create a JavaScript bundle from src/handler/secret-watcher.ts",
+      "steps": [
+        {
+          "execArgs": [
+            "esbuild",
+            "--bundle",
+            "src/handler/secret-watcher.ts",
+            "--target=node24",
+            "--platform=node",
+            "--outfile=assets/handler/secret-watcher/index.js",
+            "--tsconfig=test/tsconfig.json",
+            "--external:@aws-sdk/*"
+          ]
+        }
+      ]
+    },
+    "bundle:handler/secret-watcher:watch": {
+      "name": "bundle:handler/secret-watcher:watch",
+      "description": "Continuously update the JavaScript bundle from src/handler/secret-watcher.ts",
+      "steps": [
+        {
+          "execArgs": [
+            "esbuild",
+            "--bundle",
+            "src/handler/secret-watcher.ts",
+            "--target=node24",
+            "--platform=node",
+            "--outfile=assets/handler/secret-watcher/index.js",
+            "--tsconfig=test/tsconfig.json",
+            "--external:@aws-sdk/*",
+            "--watch"
+          ]
+        }
+      ]
+    },
+    "clobber": {
+      "name": "clobber",
+      "description": "hard resets to HEAD of origin and cleans the local repo",
+      "env": {
+        "BRANCH": "$(git branch --show-current)"
+      },
+      "steps": [
+        {
+          "execArgs": [
+            "git",
+            "checkout",
+            "-b",
+            "scratch"
+          ],
+          "name": "save current HEAD in \"scratch\" branch"
+        },
+        {
+          "exec": "git checkout \"$BRANCH\""
+        },
+        {
+          "execArgs": [
+            "git",
+            "fetch",
+            "origin"
+          ],
+          "name": "fetch latest changes from origin"
+        },
+        {
+          "exec": "git reset --hard \"origin/$BRANCH\"",
+          "name": "hard reset to origin commit"
+        },
+        {
+          "execArgs": [
+            "git",
+            "clean",
+            "-fdx"
+          ],
+          "name": "clean all untracked files"
+        },
+        {
+          "say": "ready to rock! (unpushed commits are under the \"scratch\" branch)"
+        }
+      ],
+      "condition": "git diff --exit-code > /dev/null"
+    },
+    "compat": {
+      "name": "compat",
+      "description": "Perform API compatibility check against latest version",
+      "steps": [
+        {
+          "execArgs": [
+            "jsii-diff",
+            "npm:secret-watcher",
+            "-k",
+            "--ignore-file",
+            ".compatignore"
+          ]
+        }
+      ]
+    },
+    "compile": {
+      "name": "compile",
+      "description": "Only compile",
+      "steps": [
+        {
+          "exec": "jsii --silence-warnings=reserved-word"
+        }
+      ]
+    },
+    "default": {
+      "name": "default",
+      "description": "Synthesize project files",
+      "steps": [
+        {
+          "execArgs": [
+            "ts-node",
+            "--project",
+            "projenrc/tsconfig.json",
+            ".projenrc.ts"
+          ]
+        }
+      ]
+    },
+    "docgen": {
+      "name": "docgen",
+      "description": "Generate API.md from .jsii manifest",
+      "steps": [
+        {
+          "execArgs": [
+            "jsii-docgen",
+            "-o",
+            "API.md"
+          ]
+        }
+      ]
+    },
+    "eject": {
+      "name": "eject",
+      "description": "Remove projen from the project",
+      "env": {
+        "PROJEN_EJECTING": "true"
+      },
+      "steps": [
+        {
+          "spawn": "default"
+        }
+      ]
+    },
+    "install": {
+      "name": "install",
+      "description": "Install project dependencies and update lockfile (non-frozen)",
+      "steps": [
+        {
+          "exec": "pnpm i --no-frozen-lockfile"
+        }
+      ]
+    },
+    "install:ci": {
+      "name": "install:ci",
+      "description": "Install project dependencies using frozen lockfile",
+      "steps": [
+        {
+          "exec": "pnpm i --frozen-lockfile"
+        }
+      ]
+    },
+    "integ": {
+      "name": "integ",
+      "description": "Deploy test/integ.*.ts to AWS, run the assertions, compare against the committed snapshots, then destroy",
+      "steps": [
+        {
+          "spawn": "bundle"
+        },
+        {
+          "exec": "integ-runner --force --parallel-regions ap-northeast-1 --language typescript --app \"tsx {filePath}\""
+        }
+      ]
+    },
+    "integ:destroy": {
+      "name": "integ:destroy",
+      "description": "Destroy the stacks left behind by integ",
+      "steps": [
+        {
+          "exec": "for d in test/integ.*.snapshot; do [ -d \"$d\" ] || continue; cdk destroy --app \"$d\" --all --force; done"
+        }
+      ]
+    },
+    "package": {
+      "name": "package",
+      "description": "Creates the distribution package",
+      "steps": [
+        {
+          "spawn": "package:js",
+          "condition": "node -e \"if (!process.env.CI) process.exit(1)\""
+        },
+        {
+          "spawn": "package-all",
+          "condition": "node -e \"if (process.env.CI) process.exit(1)\""
+        }
+      ]
+    },
+    "package-all": {
+      "name": "package-all",
+      "description": "Packages artifacts for all target languages",
+      "steps": [
+        {
+          "spawn": "package:js"
+        }
+      ]
+    },
+    "package:js": {
+      "name": "package:js",
+      "description": "Create js language bindings",
+      "steps": [
+        {
+          "execArgs": [
+            "jsii-pacmak",
+            "-v",
+            "--pack-command",
+            "pnpm pack",
+            "--target",
+            "js"
+          ]
+        }
+      ]
+    },
+    "post-compile": {
+      "name": "post-compile",
+      "description": "Runs after successful compilation",
+      "steps": [
+        {
+          "spawn": "docgen"
+        }
+      ]
+    },
+    "post-upgrade": {
+      "name": "post-upgrade",
+      "description": "Runs after upgrading dependencies"
+    },
+    "pre-compile": {
+      "name": "pre-compile",
+      "description": "Prepare the project for compilation",
+      "steps": [
+        {
+          "spawn": "bundle"
+        }
+      ]
+    },
+    "test": {
+      "name": "test",
+      "description": "Run tests",
+      "steps": [
+        {
+          "exec": "vp test run"
+        },
+        {
+          "exec": "vp check"
+        }
+      ]
+    },
+    "upgrade": {
+      "name": "upgrade",
+      "description": "upgrade dependencies",
+      "env": {
+        "CI": "0"
+      },
+      "steps": [
+        {
+          "execArgs": [
+            "pnpm",
+            "dlx",
+            "npm-check-updates@20",
+            "--upgrade",
+            "--target=minor",
+            "--peer",
+            "--no-deprecated",
+            "--dep=dev,prod,peer,optional",
+            "--filter=@aws-cdk/integ-runner,@aws-sdk/client-secrets-manager,@aws-sdk/client-ssm,@types/aws-lambda,aws-cdk,esbuild,jsii-diff,jsii-pacmak,oxlint-plugin-awscdk,projen,ts-node,tsx"
+          ]
+        },
+        {
+          "exec": "pnpm i --no-frozen-lockfile"
+        },
+        {
+          "execArgs": [
+            "pnpm",
+            "update",
+            "@aws-cdk/integ-runner",
+            "@aws-sdk/client-secrets-manager",
+            "@aws-sdk/client-ssm",
+            "@types/aws-lambda",
+            "@types/node",
+            "aws-cdk",
+            "esbuild",
+            "jsii-diff",
+            "jsii-docgen",
+            "jsii-pacmak",
+            "oxlint-plugin-awscdk",
+            "projen",
+            "ts-node",
+            "tsx",
+            "vite-plus",
+            "constructs"
+          ]
+        },
+        {
+          "exec": "pnpm exec projen"
+        },
+        {
+          "spawn": "post-upgrade"
+        }
+      ]
+    },
+    "watch": {
+      "name": "watch",
+      "description": "Watch & compile in the background",
+      "steps": [
+        {
+          "exec": "jsii -w --silence-warnings=reserved-word"
+        }
+      ]
+    }
+  },
+  "//": "~~ Generated by projen. To modify, edit .projenrc.ts and run \"pnpm exec projen\"."
+}
