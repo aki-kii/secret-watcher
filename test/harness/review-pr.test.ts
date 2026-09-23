@@ -35,6 +35,7 @@ beforeEach(() => {
     join(bin, 'pnpm'),
     [
       '#!/bin/sh',
+      'echo "  ${FAKE_INTEG_VERDICT:-UNCHANGED}  integ.a.ts"',
       '[ -n "$FAKE_INTEG_WRITE" ] && mkdir -p "$(dirname "$FAKE_INTEG_WRITE")" && echo x > "$FAKE_INTEG_WRITE"',
       'exit "${FAKE_INTEG_EXIT:-0}"',
       '',
@@ -127,10 +128,11 @@ function integ(env: Record<string, string> = {}): {
 
 function pass(): void {
   write('README.md', 'changed\n');
-  ok('start', '--base', 'main');
-  review(1, 'general', { replies: [], findings: [] });
+  const plan = ok('start', '--base', 'main');
+  for (const { reviewer } of plan.reviewers!) review(1, reviewer, { replies: [], findings: [] });
   expect(ok('judge').result).toBe('DONE');
-  git('commit', '-q', '-am', 'change');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'change');
   git('push', '-q', 'origin', 'feature');
 }
 
@@ -436,15 +438,56 @@ describe('integ', () => {
     expect(gate()).toBe(2);
   });
 
-  test('a snapshot written by the run is outside what the review passed', () => {
+  test('a snapshot written for a new test is outside what the review passed', () => {
     pass();
 
-    const r = integ({ FAKE_INTEG_WRITE: 'test/integ.a.ts.snapshot/manifest.json' });
+    const r = integ({
+      FAKE_INTEG_VERDICT: 'NEW',
+      FAKE_INTEG_WRITE: 'test/integ.a.ts.snapshot/manifest.json',
+    });
 
     expect(JSON.parse(r.stdout)).toEqual(
       expect.objectContaining({ result: 'PASSED', snapshotChanged: true }),
     );
     expect(gate()).toBe(2);
+  });
+
+  test('a changed snapshot fails the run even though integ-runner exits 0', () => {
+    write('test/integ.a.ts.snapshot/manifest.json', 'committed\n');
+    pass();
+
+    const r = integ({
+      FAKE_INTEG_VERDICT: 'CHANGED',
+      FAKE_INTEG_WRITE: 'test/integ.a.ts.snapshot/manifest.json',
+    });
+
+    expect(r.status).toBe(1);
+    expect(r.stderr).toMatch(/snapshot of integ.a.ts differs from the committed one/);
+    expect(readFileSync(join(repo, 'test/integ.a.ts.snapshot/manifest.json'), 'utf8')).toBe('x\n');
+  });
+
+  test('an unchanged snapshot that integ-runner rewrote is restored', () => {
+    write('test/integ.a.ts.snapshot/manifest.json', 'committed\n');
+    pass();
+
+    const r = integ({ FAKE_INTEG_WRITE: 'test/integ.a.ts.snapshot/manifest.json' });
+
+    expect(JSON.parse(r.stdout)).toEqual(
+      expect.objectContaining({ result: 'PASSED', snapshotChanged: false }),
+    );
+    expect(readFileSync(join(repo, 'test/integ.a.ts.snapshot/manifest.json'), 'utf8')).toBe(
+      'committed\n',
+    );
+    expect(gate()).toBe(0);
+  });
+
+  test('a run without a snapshot verdict fails', () => {
+    pass();
+
+    const r = integ({ FAKE_INTEG_VERDICT: 'SUCCESS' });
+
+    expect(r.status).toBe(1);
+    expect(r.stderr).toMatch(/no snapshot verdict/);
   });
 
   test('a run that changes files outside the snapshots fails', () => {

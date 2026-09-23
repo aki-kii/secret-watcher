@@ -62,7 +62,13 @@ Integration test stacks must not set physical names, and must set `RemovalPolicy
 
 Open pull requests through the `review-pr` skill. It runs the integration test, then reviewer subagents (`general`, `cdk`, `security`, `script`) in a loop driven by `.claude/review/review.mjs`, which picks the reviewers from the changed paths and lines and decides when the loop ends. A PreToolUse hook blocks `gh pr create` (and its alias `gh pr new`, with flags anywhere in between) until the review has passed, the reviewed files are committed and pushed to `origin/<branch>`, and the last `review.mjs integ` run passed on exactly those files.
 
-`review.mjs integ` records the result with the git tree of the working copy after the run, so any later change to a file invalidates it. A run that changes files outside `test/*.snapshot/` is recorded as failed.
+`review.mjs integ` records the result with the git tree of the working copy after the run, so any later change to a file invalidates it. It reads integ-runner's snapshot verdict, because `--force` deploys a test whose snapshot is `CHANGED` and rewrites the snapshot without failing:
+
+- `CHANGED` — recorded as failed. The rewritten snapshot is left in the working tree for the user to judge.
+- `NEW` — passes, and the new snapshot must be committed and reviewed.
+- `UNCHANGED` — passes. integ-tests-alpha stamps its assertions with a timestamp `salt`, so the run still rewrites the snapshot files; the script restores them to the committed state.
+
+A run that changes files outside `test/*.snapshot/` is recorded as failed.
 
 The hook's `if` rules let Claude Code's own command parser decide which Bash calls reach the gate, so chained commands, `VAR=value` prefixes and wrappers such as `timeout` are covered. It is a guardrail against skipping the review or the integration test by accident, not a security boundary: `/usr/bin/gh pr create`, `bash -c '...'` and `gh api` calls that create a pull request are not caught, and pull requests opened outside Claude Code are not gated at all.
 

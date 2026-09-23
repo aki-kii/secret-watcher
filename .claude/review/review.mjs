@@ -24,6 +24,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { stripVTControlCharacters } from 'node:util';
 
 export const MAX_ROUNDS = 3;
 const SEVERITIES = ['low', 'medium', 'high', 'critical'];
@@ -245,28 +246,54 @@ function summary(repo) {
 
 function integ(repo) {
   const before = repo.snapshot();
-  // integ-runner's output goes to stderr so stdout stays JSON.
   const r = spawnSync('pnpm', ['exec', 'projen', 'integ'], {
     cwd: repo.root,
-    stdio: ['ignore', 2, 2],
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
   });
-  const tree = repo.snapshot();
-  const outside = repo.changedFiles(before, tree).filter((f) => !INTEG_SNAPSHOT.test(f));
-  const passed = r.status === 0 && outside.length === 0;
-  repo.saveInteg({ status: passed ? 'passed' : 'failed', tree, at: new Date().toISOString() });
-  if (r.status !== 0) {
-    fail(`integration test failed (${r.error?.message ?? `exit ${r.status ?? r.signal}`})`);
+  const output = `${r.stdout ?? ''}${r.stderr ?? ''}`;
+  // Shown on stderr so stdout stays JSON.
+  process.stderr.write(output);
+  // integ-runner's snapshot verdict, printed before it deploys. --force deploys and rewrites a
+  // CHANGED snapshot too, so the verdict is the only sign that the snapshot moved.
+  const verdicts = [
+    ...stripVTControlCharacters(output).matchAll(/^\s*(UNCHANGED|CHANGED|NEW)\s+(\S+)/gm),
+  ].map(([, verdict, test]) => ({ verdict, test }));
+  const changed = verdicts.filter((v) => v.verdict === 'CHANGED').map((v) => v.test);
+  const isNew = verdicts.some((v) => v.verdict === 'NEW');
+
+  let tree = repo.snapshot();
+  const touched = repo.changedFiles(before, tree);
+  const outside = touched.filter((f) => !INTEG_SNAPSHOT.test(f));
+  if (r.status === 0 && changed.length === 0 && !isNew && outside.length === 0 && touched.length) {
+    // Every snapshot matched; what integ-runner rewrote is noise such as the assertions' salt.
+    const inBefore = new Set(repo.git(['ls-tree', '-r', '--name-only', before]).split('\n'));
+    const restore = touched.filter((f) => inBefore.has(f));
+    if (restore.length) repo.git(['restore', `--source=${before}`, '--worktree', '--', ...restore]);
+    for (const f of touched.filter((f) => !inBefore.has(f))) rmSync(join(repo.root, f));
+    tree = repo.snapshot();
   }
-  if (outside.length) {
-    fail(`files outside the integ snapshots changed during the run: ${outside.join(', ')}`);
-  }
+
+  const why =
+    r.status !== 0
+      ? `integration test failed (${r.error?.message ?? `exit ${r.status ?? r.signal}`})`
+      : outside.length
+        ? `files outside the integ snapshots changed during the run: ${outside.join(', ')}`
+        : changed.length
+          ? `the snapshot of ${changed.join(', ')} differs from the committed one, and integ-runner rewrote it; ` +
+            'show the diff to the user, who decides whether to commit it'
+          : verdicts.length === 0
+            ? 'no snapshot verdict found in the integ-runner output'
+            : null;
+  repo.saveInteg({ status: why ? 'failed' : 'passed', tree, at: new Date().toISOString() });
+  if (why) fail(why);
   print({
     result: 'PASSED',
     snapshotChanged: tree !== before,
     next:
       tree === before
         ? 'Recorded. The gate accepts it once the review passes on these files.'
-        : 'integ-runner wrote a snapshot. Commit it; the review must pass on the files as they are now.',
+        : 'integ-runner wrote a snapshot for a new test. Commit it; the review must pass on the files as they are now.',
   });
 }
 
