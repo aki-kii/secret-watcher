@@ -5,14 +5,12 @@ import type {
   CloudFormationCustomResourceEvent,
   CloudFormationCustomResourceResponse,
 } from 'aws-lambda';
+import type { WatchTargetKind } from './kind';
 
 const ssm = new SSMClient({});
 const sm = new SecretsManagerClient({});
 
 type Response = Partial<Pick<CloudFormationCustomResourceResponse, 'PhysicalResourceId' | 'Data'>>;
-
-/** What a watch target points at. Shared with `WatchTarget` in the construct. */
-export type WatchTargetKind = 'ssm' | 'secretsmanager';
 
 function assertNever(x: never): never {
   throw new Error(`Unreachable: unexpected Kind ${JSON.stringify(x)}`);
@@ -25,7 +23,9 @@ async function resolveVersion(kind: WatchTargetKind, targetId: string): Promise<
       const res = await ssm.send(
         new GetParameterCommand({ Name: targetId, WithDecryption: false }),
       );
-      return String(res.Parameter?.Version);
+      const version = res.Parameter?.Version;
+      if (version === undefined) throw new Error(`Parameter version not found: ${targetId}`);
+      return String(version);
     }
     case 'secretsmanager': {
       const res = await sm.send(new DescribeSecretCommand({ SecretId: targetId }));

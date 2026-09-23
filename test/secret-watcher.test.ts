@@ -102,6 +102,20 @@ describe('SecretWatcher', () => {
     });
   });
 
+  describe('WatchTarget.fromSecret with a secret imported by name', () => {
+    const t = synth((stack) =>
+      WatchTarget.fromSecret(secretsmanager.Secret.fromSecretNameV2(stack, 'Secret', 'app/key')),
+    );
+
+    test('matches the ARN suffix IAM needs, since the imported ARN has none', () => {
+      const policy = Object.values(t.findResources('AWS::IAM::Policy'))[0];
+      const statement = policy.Properties.PolicyDocument.Statement[0];
+
+      expect(statement.Action).toBe('secretsmanager:DescribeSecret');
+      expect(JSON.stringify(statement.Resource)).toContain(':secret:app/key-??????');
+    });
+  });
+
   describe('WatchTarget._bind', () => {
     test('returns the kind and identifier', () => {
       const stack = new Stack(new App(), 'Test');

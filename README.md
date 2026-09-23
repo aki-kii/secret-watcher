@@ -56,7 +56,7 @@ new CustomResource(this, 'PushApiKey', {
 2. On each update, the watcher's Lambda function reads the current version and returns `Hash`, the first 32 hex characters of `sha256("<parameter name or secret ARN>:<version>")`. For a parameter the version is `Version` from `GetParameter` (without decryption); for a secret it is the version ID staged as `AWSCURRENT`, from `DescribeSecret`. The value is never read.
 3. `hash()` returns an `Fn::GetAtt` on that attribute. CloudFormation resolves it and compares the resolved value with the previous one. The consumer is updated only when the hash differs, which happens only when the version changed.
 
-The watcher keeps the same physical ID (the parameter name or secret ARN) across updates, so it is never replaced.
+The watcher's physical ID is the parameter name or secret ARN, so the nonce updates it in place. Only pointing it at a different target replaces it.
 
 ## IAM permissions
 

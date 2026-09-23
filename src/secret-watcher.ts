@@ -6,7 +6,7 @@ import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import { Provider } from 'aws-cdk-lib/custom-resources';
 import { Construct } from 'constructs';
-import type { WatchTargetKind } from './handler/secret-watcher';
+import type { WatchTargetKind } from './handler/kind';
 
 /** The result of binding a `WatchTarget`: the values passed to the custom resource. */
 interface WatchTargetConfig {
@@ -69,7 +69,8 @@ class SecretWatchTarget extends WatchTarget {
     iam.Grant.addToPrincipal({
       grantee,
       actions: ['secretsmanager:DescribeSecret'],
-      resourceArns: [this.secret.secretArn],
+      // A secret imported by name has a partial ARN; IAM needs the 6-character suffix matched.
+      resourceArns: [this.secret.secretFullArn ?? `${this.secret.secretArn}-??????`],
     });
     return { kind: 'secretsmanager', targetId: this.secret.secretArn };
   }
