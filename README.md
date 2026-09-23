@@ -62,9 +62,9 @@ The watcher keeps the same physical ID (the parameter name or secret ARN) across
 
 The watcher's Lambda function is granted one action on the one target:
 
-| Target | Action |
-| --- | --- |
-| SSM parameter | `ssm:GetParameter` |
+| Target                 | Action                          |
+| ---------------------- | ------------------------------- |
+| SSM parameter          | `ssm:GetParameter`              |
 | Secrets Manager secret | `secretsmanager:DescribeSecret` |
 
 `DescribeSecret` cannot read the secret value. `GetParameter` can read a `String` parameter's value, but the function calls it without decryption and uses only the version. The function returns only the hash.
