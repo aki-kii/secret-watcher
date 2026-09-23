@@ -3,6 +3,8 @@
 useDefault = true
 
 [[allowlists]]
-description = "CDK asset hashes"
+description = "CDK asset hashes in integ snapshots"
+condition = "AND"
+paths = ['''^test/[^/]+\.snapshot/''']
 regexTarget = "match"
 regexes = ['''[0-9a-f]{64}''']
