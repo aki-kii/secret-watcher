@@ -21,12 +21,12 @@ jobs:
           ref: ${{ github.event.pull_request.head.ref }}
           repository: ${{ github.event.pull_request.head.repo.full_name }}
       - name: Setup pnpm
-        uses: pnpm/setup@v2.1.0
+        uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b
         with:
           version: 12.4.2
           install: false
       - name: Setup Node.js
-        uses: actions/setup-node@v7.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: "24"
           package-manager-cache: false
@@ -107,7 +107,7 @@ jobs:
       contents: read
     if: ${{ !needs.build.outputs.self_mutation_happened }}
     steps:
-      - uses: actions/setup-node@v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: "24"
           package-manager-cache: false
@@ -123,7 +123,7 @@ jobs:
         continue-on-error: true
       - name: Setup pnpm
         id: setup_pnpm
-        uses: pnpm/setup@v2.1.0
+        uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b
         with:
           version: 12.4.2
           install: false

@@ -133,6 +133,20 @@ new TomlFile(project, 'mise.toml', {
   },
 });
 
+// Actions projen references by tag, pinned to the commit the tag pointed at.
+// v2.1.0
+const pnpmSetup = 'pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b';
+// v7.0.0
+project.github?.actions.set(
+  'actions/setup-node',
+  'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
+);
+// v8.1.1; the upgrade workflow hands it PROJEN_GITHUB_TOKEN.
+project.github?.actions.set(
+  'peter-evans/create-pull-request',
+  'peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1',
+);
+
 // pnpm/action-setup installs pnpm from npm; pnpm 12 ships as a native binary through pnpm/setup.
 class NativePnpmSetup extends Component {
   public preSynthesize(): void {
@@ -144,7 +158,7 @@ class NativePnpmSetup extends Component {
         const steps = () =>
           (typeof original === 'function' ? original() : original).map((step) =>
             step.uses?.startsWith('pnpm/action-setup@')
-              ? { ...step, uses: 'pnpm/setup@v2.1.0', with: { ...step.with, install: false } }
+              ? { ...step, uses: pnpmSetup, with: { ...step.with, install: false } }
               : step,
           );
         workflow.updateJob(id, { ...job, steps: steps as unknown as JobStep[] });
