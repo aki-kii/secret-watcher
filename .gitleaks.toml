@@ -1,0 +1,8 @@
+# CDK asset hashes (sha256 hex) in integ snapshots look like generic API keys.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "CDK asset hashes"
+regexTarget = "match"
+regexes = ['''[0-9a-f]{64}''']
