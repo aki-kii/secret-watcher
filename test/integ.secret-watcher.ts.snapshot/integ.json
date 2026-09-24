@@ -1,0 +1,14 @@
+{
+  "version": "54.0.0",
+  "testCases": {
+    "SecretWatcherIntegTest/DefaultTest": {
+      "stacks": [
+        "SecretWatcherInteg"
+      ],
+      "assertionStack": "SecretWatcherIntegTest/DefaultTest/DeployAssert",
+      "assertionStackName": "SecretWatcherIntegTestDefaultTestDeployAssert0456C19C"
+    }
+  },
+  "enableLookups": true,
+  "minimumCliVersion": "2.1142.0"
+}
