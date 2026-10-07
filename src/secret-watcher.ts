@@ -130,6 +130,8 @@ export class SecretWatcher extends Construct {
 
     this.resource = new CustomResource(this, 'Resource', {
       serviceToken: handler.functionArn,
+      // Without Provider, a crash before the handler responds otherwise leaves CloudFormation waiting an hour.
+      serviceTimeout: Duration.minutes(2),
       resourceType: 'Custom::SecretWatcher',
       properties: {
         Kind: target.kind,

@@ -125,12 +125,19 @@ describe('SecretWatcher', () => {
     new SecretWatcher(stack, 'SecretWatcher', { target: WatchTarget.fromSecret(secret) });
     const t = Template.fromStack(stack);
 
-    test('share one Lambda function as the service token', () => {
-      const functions = Object.keys(t.findResources('AWS::Lambda::Function'));
-      expect(functions).toHaveLength(1);
-      t.allResourcesProperties('Custom::SecretWatcher', {
-        ServiceToken: { 'Fn::GetAtt': [functions[0], 'Arn'] },
-      });
+    // CloudFormation cannot update a ServiceToken, so these logical IDs must not change after a release.
+    test('share one Lambda function, whose ARN is every service token', () => {
+      const fn = 'SecretWatchera580c4e78ff84c05929d3b7fe281d535';
+      expect(Object.keys(t.findResources('AWS::Lambda::Function'))).toEqual([fn]);
+
+      const watchers = t.findResources('Custom::SecretWatcher');
+      expect(Object.keys(watchers).sort()).toEqual([
+        'ParamWatcher47E31C45',
+        'SecretWatcher8C03309F',
+      ]);
+      for (const watcher of Object.values(watchers)) {
+        expect(watcher.Properties.ServiceToken).toEqual({ 'Fn::GetAtt': [fn, 'Arn'] });
+      }
     });
 
     test('the shared role gets each target its own action only', () => {
