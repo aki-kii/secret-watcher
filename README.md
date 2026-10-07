@@ -53,14 +53,14 @@ new CustomResource(this, 'PushApiKey', {
 ## How it works
 
 1. The watcher is a custom resource with a `Nonce` property that defaults to `Date.now()`. The nonce changes on every synth, so CloudFormation updates the watcher on every deployment.
-2. On each update, the watcher's Lambda function reads the current version and returns `Hash`, the first 32 hex characters of `sha256("<parameter name or secret ARN>:<version>")`. For a parameter the version is `Version` from `GetParameter` (without decryption); for a secret it is the version ID staged as `AWSCURRENT`, from `DescribeSecret`. The value is never read.
+2. On each update, the watcher's Lambda function (one per stack, shared by all watchers in it) reads the current version and returns `Hash`, the first 32 hex characters of `sha256("<parameter name or secret ARN>:<version>")`. For a parameter the version is `Version` from `GetParameter` (without decryption); for a secret it is the version ID staged as `AWSCURRENT`, from `DescribeSecret`. The value is never read.
 3. `hash()` returns an `Fn::GetAtt` on that attribute. CloudFormation resolves it and compares the resolved value with the previous one. The consumer is updated only when the hash differs, which happens only when the version changed.
 
 The watcher's physical ID is the parameter name or secret ARN, so the nonce updates it in place. Only pointing it at a different target replaces it.
 
 ## IAM permissions
 
-The watcher's Lambda function is granted one action on the one target:
+All watchers in a stack share one Lambda function. Each watcher grants it one action on its own target:
 
 | Target                 | Action                          |
 | ---------------------- | ------------------------------- |
@@ -76,7 +76,6 @@ The watcher's Lambda function is granted one action on the one target:
 - **Token values skip synth-time checks.** L2 constructs cannot validate a value that contains a token. For example, `lambda.Function` does not check the description length (256 characters) when it contains `hash()`; an overlong value fails at deploy time instead.
 - **Pick a property whose change updates the resource, not one that replaces it, and that has the effect you want.** A property that forces replacement recreates the resource on every new version. A property that is stored but never read may update the resource without changing anything it does.
 - **Changes are detected only at deploy time.** A new version does nothing until the next deployment. If the resource must react when the secret changes, use an EventBridge rule on the Secrets Manager or Parameter Store event instead.
-- **Each watcher creates its own Lambda function and custom resource provider.** Many watchers mean many functions.
 
 ## Development
 
