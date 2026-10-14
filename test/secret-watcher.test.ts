@@ -8,6 +8,13 @@ import { describe, expect, test } from 'vite-plus/test';
 import { SecretWatcher, WatchTarget } from '../src';
 
 const NONCE = 'fixed-nonce';
+
+// Asset hashes change with every change to the handler bundle.
+expect.addSnapshotSerializer({
+  test: (val) => typeof val === 'string' && /[0-9a-f]{64}/.test(val),
+  serialize: (val: string) => JSON.stringify(val.replace(/[0-9a-f]{64}/g, 'hashed')),
+});
+
 const handlerRole = { Ref: Match.stringLikeRegexp('^SecretWatcher[0-9a-f]{32}ServiceRole') };
 
 // A watcher plus an L2 Function whose description uses hash().
@@ -121,23 +128,27 @@ describe('SecretWatcher', () => {
     const stack = new Stack(new App(), 'Test');
     const param = new ssm.StringParameter(stack, 'Param', { stringValue: 'v' });
     const secret = new secretsmanager.Secret(stack, 'Secret');
-    new SecretWatcher(stack, 'ParamWatcher', { target: WatchTarget.fromParameter(param) });
-    new SecretWatcher(stack, 'SecretWatcher', { target: WatchTarget.fromSecret(secret) });
+    new SecretWatcher(stack, 'ParamWatcher', {
+      target: WatchTarget.fromParameter(param),
+      nonce: NONCE,
+    });
+    new SecretWatcher(stack, 'SecretWatcher', {
+      target: WatchTarget.fromSecret(secret),
+      nonce: NONCE,
+    });
     const t = Template.fromStack(stack);
 
-    // CloudFormation cannot update a ServiceToken, so these logical IDs must not change after a release.
     test('share one Lambda function, whose ARN is every service token', () => {
-      const fn = 'SecretWatchera580c4e78ff84c05929d3b7fe281d535';
-      expect(Object.keys(t.findResources('AWS::Lambda::Function'))).toEqual([fn]);
+      t.resourceCountIs('AWS::Lambda::Function', 1);
+      const [fn] = Object.keys(t.findResources('AWS::Lambda::Function'));
+      t.allResourcesProperties('Custom::SecretWatcher', {
+        ServiceToken: { 'Fn::GetAtt': [fn, 'Arn'] },
+      });
+    });
 
-      const watchers = t.findResources('Custom::SecretWatcher');
-      expect(Object.keys(watchers).sort()).toEqual([
-        'ParamWatcher47E31C45',
-        'SecretWatcher8C03309F',
-      ]);
-      for (const watcher of Object.values(watchers)) {
-        expect(watcher.Properties.ServiceToken).toEqual({ 'Fn::GetAtt': [fn, 'Arn'] });
-      }
+    // CloudFormation cannot update a ServiceToken, so the logical IDs must not change after a release.
+    test('template', () => {
+      expect(t.toJSON()).toMatchSnapshot();
     });
 
     test('the shared role gets each target its own action only', () => {
