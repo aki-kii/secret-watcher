@@ -10,6 +10,9 @@ Pass `hash()` to a property of another resource in the same stack. CloudFormatio
 resource only when the target has a new version since the last deployment, including a version
 created outside CDK.
 
+All watchers in a stack share one Lambda function. Each watcher grants its role access to its
+own target only.
+
 **Note**: the watcher itself runs on every deployment, so `cdk diff` always shows a change to it.
 
 #### Initializers <a name="Initializers" id="secret-watcher.SecretWatcher.Initializer"></a>

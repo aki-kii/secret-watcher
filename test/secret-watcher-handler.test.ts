@@ -1,9 +1,14 @@
 import { createHash } from 'node:crypto';
 import { SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { SSMClient } from '@aws-sdk/client-ssm';
-import type { CloudFormationCustomResourceEvent } from 'aws-lambda';
-import { afterEach, describe, expect, test, vi } from 'vite-plus/test';
+import type {
+  CloudFormationCustomResourceEvent,
+  CloudFormationCustomResourceResponse,
+} from 'aws-lambda';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vite-plus/test';
 import { handler } from '../src/handler/secret-watcher';
+
+const RESPONSE_URL = 'https://example.com/response';
 
 function event(
   requestType: 'Create' | 'Update' | 'Delete',
@@ -11,7 +16,7 @@ function event(
 ): CloudFormationCustomResourceEvent {
   const base = {
     ServiceToken: 'token',
-    ResponseURL: 'https://example.com',
+    ResponseURL: RESPONSE_URL,
     StackId: 'stack',
     RequestId: 'req',
     LogicalResourceId: 'Watcher',
@@ -53,26 +58,55 @@ function stubSecret(...stagesList: Record<string, string[]>[]) {
   return send;
 }
 
+const fetchMock = vi.fn<typeof fetch>();
+
+/** Runs the handler and returns the response it sent to CloudFormation. */
+async function run(
+  e: CloudFormationCustomResourceEvent,
+): Promise<CloudFormationCustomResourceResponse> {
+  fetchMock.mockClear();
+  await handler(e);
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  const [url, init] = fetchMock.mock.calls[0];
+  expect(url).toBe(RESPONSE_URL);
+  expect(init?.method).toBe('PUT');
+  return JSON.parse(init?.body as string);
+}
+
+const request = { StackId: 'stack', RequestId: 'req', LogicalResourceId: 'Watcher' };
+
+beforeEach(() => {
+  fetchMock.mockResolvedValue(new Response(null, { status: 200 }));
+  vi.stubGlobal('fetch', fetchMock);
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('secret-watcher handler', () => {
   test('hashes the parameter version, read without decryption', async () => {
     const send = stubSsm(3);
 
-    const result = await handler(event('Create', 'ssm'));
+    const response = await run(event('Create', 'ssm'));
 
-    expect(result).toEqual({ PhysicalResourceId: 'target', Data: { Hash: hashOf('3') } });
+    expect(response).toEqual({
+      ...request,
+      Status: 'SUCCESS',
+      PhysicalResourceId: 'target',
+      Data: { Hash: hashOf('3') },
+    });
     expect(send.mock.calls[0][0].input).toEqual({ Name: 'target', WithDecryption: false });
   });
 
   test('the hash stays for the same version and changes for a new one', async () => {
     stubSsm(3, 3, 4);
 
-    const first = await handler(event('Create', 'ssm'));
-    const same = await handler(event('Update', 'ssm'));
-    const next = await handler(event('Update', 'ssm'));
+    const first = await run(event('Create', 'ssm'));
+    const same = await run(event('Update', 'ssm'));
+    const next = await run(event('Update', 'ssm'));
 
     expect(same.Data).toEqual(first.Data);
     expect(next.Data).not.toEqual(first.Data);
@@ -81,32 +115,69 @@ describe('secret-watcher handler', () => {
   test('a parameter without a version fails', async () => {
     stubSsm(undefined);
 
-    await expect(handler(event('Create', 'ssm'))).rejects.toThrow('Parameter version not found');
+    const response = await run(event('Update', 'ssm'));
+
+    expect(response).toEqual({
+      ...request,
+      Status: 'FAILED',
+      Reason: 'Parameter version not found: target',
+      PhysicalResourceId: 'target',
+    });
   });
 
   test('hashes the secret version staged AWSCURRENT, not the others', async () => {
     stubSecret({ old: ['AWSPREVIOUS'], cur: ['AWSPENDING', 'AWSCURRENT'], next: ['AWSPENDING'] });
 
-    const result = await handler(event('Update', 'secretsmanager'));
+    const response = await run(event('Update', 'secretsmanager'));
 
-    expect(result).toEqual({ PhysicalResourceId: 'target', Data: { Hash: hashOf('cur') } });
+    expect(response).toMatchObject({
+      Status: 'SUCCESS',
+      PhysicalResourceId: 'target',
+      Data: { Hash: hashOf('cur') },
+    });
   });
 
   test('a secret without an AWSCURRENT version fails', async () => {
     stubSecret({ old: ['AWSPREVIOUS'] });
 
-    await expect(handler(event('Create', 'secretsmanager'))).rejects.toThrow(
-      'AWSCURRENT version not found: target',
-    );
+    const response = await run(event('Create', 'secretsmanager'));
+
+    expect(response).toMatchObject({
+      Status: 'FAILED',
+      Reason: 'AWSCURRENT version not found: target',
+    });
+  });
+
+  test('a failed Create still sends a physical ID, which CloudFormation requires', async () => {
+    vi.spyOn(SSMClient.prototype, 'send').mockRejectedValueOnce(new Error('AccessDenied') as never);
+
+    const response = await run(event('Create', 'ssm'));
+
+    expect(response).toMatchObject({ Status: 'FAILED', Reason: 'AccessDenied' });
+    expect(response.PhysicalResourceId).toBeTruthy();
   });
 
   test('an unknown Kind fails as unreachable', async () => {
-    await expect(handler(event('Create', 'unknown'))).rejects.toThrow(
-      'Unreachable: unexpected Kind "unknown"',
-    );
+    const response = await run(event('Create', 'unknown'));
+
+    expect(response).toMatchObject({
+      Status: 'FAILED',
+      Reason: 'Unreachable: unexpected Kind "unknown"',
+    });
   });
 
-  test('Delete does nothing and returns {} regardless of Kind', async () => {
-    await expect(handler(event('Delete', 'unknown'))).resolves.toEqual({});
+  test('Delete succeeds with the same physical ID regardless of Kind', async () => {
+    const response = await run(event('Delete', 'unknown'));
+
+    expect(response).toEqual({ ...request, Status: 'SUCCESS', PhysicalResourceId: 'target' });
+  });
+
+  test('a rejected response throws, so the invocation is retried', async () => {
+    stubSsm(3);
+    fetchMock.mockResolvedValue(new Response(null, { status: 403, statusText: 'Forbidden' }));
+
+    await expect(handler(event('Create', 'ssm'))).rejects.toThrow(
+      'Failed to send the response: 403 Forbidden',
+    );
   });
 });

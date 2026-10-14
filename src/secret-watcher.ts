@@ -4,7 +4,6 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
-import { Provider } from 'aws-cdk-lib/custom-resources';
 import { Construct } from 'constructs';
 import type { WatchTargetKind } from './handler/kind';
 
@@ -103,6 +102,9 @@ export interface SecretWatcherProps {
  * resource only when the target has a new version since the last deployment, including a version
  * created outside CDK.
  *
+ * All watchers in a stack share one Lambda function. Each watcher grants its role access to its
+ * own target only.
+ *
  * **Note**: the watcher itself runs on every deployment, so `cdk diff` always shows a change to it.
  */
 export class SecretWatcher extends Construct {
@@ -111,7 +113,11 @@ export class SecretWatcher extends Construct {
   constructor(scope: Construct, id: string, props: SecretWatcherProps) {
     super(scope, id);
 
-    const onEvent = new lambda.Function(this, 'Handler', {
+    // One function per stack, shared by every watcher in it.
+    const handler = new lambda.SingletonFunction(this, 'Handler', {
+      // Changing the uuid renames the function's logical ID, which changes every watcher's ServiceToken.
+      uuid: 'a580c4e7-8ff8-4c05-929d-3b7fe281d535',
+      lambdaPurpose: 'SecretWatcher',
       runtime: lambda.Runtime.NODEJS_24_X,
       handler: 'index.handler',
       // Built by projen's bundle task from src/handler/secret-watcher.ts.
@@ -120,12 +126,12 @@ export class SecretWatcher extends Construct {
       ),
       timeout: Duration.seconds(30),
     });
-    const target = props.target._bind(this, onEvent);
-
-    const provider = new Provider(this, 'Provider', { onEventHandler: onEvent });
+    const target = props.target._bind(this, handler);
 
     this.resource = new CustomResource(this, 'Resource', {
-      serviceToken: provider.serviceToken,
+      serviceToken: handler.functionArn,
+      // Without Provider, a crash before the handler responds otherwise leaves CloudFormation waiting an hour.
+      serviceTimeout: Duration.minutes(2),
       resourceType: 'Custom::SecretWatcher',
       properties: {
         Kind: target.kind,

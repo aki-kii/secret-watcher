@@ -10,7 +10,7 @@ import type { WatchTargetKind } from './kind';
 const ssm = new SSMClient({});
 const sm = new SecretsManagerClient({});
 
-type Response = Partial<Pick<CloudFormationCustomResourceResponse, 'PhysicalResourceId' | 'Data'>>;
+type Result = Pick<CloudFormationCustomResourceResponse, 'PhysicalResourceId' | 'Data'>;
 
 function assertNever(x: never): never {
   throw new Error(`Unreachable: unexpected Kind ${JSON.stringify(x)}`);
@@ -40,14 +40,14 @@ async function resolveVersion(kind: WatchTargetKind, targetId: string): Promise<
   }
 }
 
-export const handler = async (event: CloudFormationCustomResourceEvent): Promise<Response> => {
+async function onEvent(event: CloudFormationCustomResourceEvent): Promise<Result> {
   const props = event.ResourceProperties;
   // Parameter name or secret ARN.
   const physicalResourceId: string = props.TargetId;
 
   if (event.RequestType === 'Delete') {
     console.log(JSON.stringify({ RequestType: event.RequestType, physicalResourceId }));
-    return {};
+    return { PhysicalResourceId: event.PhysicalResourceId };
   }
 
   // CloudFormation sends an untyped string; the switch default rejects unknown values.
@@ -68,4 +68,42 @@ export const handler = async (event: CloudFormationCustomResourceEvent): Promise
     }),
   );
   return { PhysicalResourceId: physicalResourceId, Data: { Hash: hash } };
+}
+
+async function respond(
+  event: CloudFormationCustomResourceEvent,
+  response: CloudFormationCustomResourceResponse,
+): Promise<void> {
+  const body = JSON.stringify(response);
+  const res = await fetch(event.ResponseURL, {
+    method: 'PUT',
+    body,
+    // The presigned URL is signed without a content type.
+    headers: { 'Content-Type': '', 'Content-Length': Buffer.byteLength(body).toString() },
+  });
+  if (!res.ok) throw new Error(`Failed to send the response: ${res.status} ${res.statusText}`);
+}
+
+/** Invoked directly by CloudFormation, so it must always respond, or the stack waits for an hour. */
+export const handler = async (event: CloudFormationCustomResourceEvent): Promise<void> => {
+  const base = {
+    StackId: event.StackId,
+    RequestId: event.RequestId,
+    LogicalResourceId: event.LogicalResourceId,
+  };
+  let response: CloudFormationCustomResourceResponse;
+  try {
+    response = { ...base, Status: 'SUCCESS', ...(await onEvent(event)) };
+  } catch (e) {
+    console.error(e);
+    response = {
+      ...base,
+      Status: 'FAILED',
+      Reason: e instanceof Error ? e.message : String(e),
+      // A failed Create has no physical ID yet.
+      PhysicalResourceId:
+        event.RequestType === 'Create' ? event.RequestId : event.PhysicalResourceId,
+    };
+  }
+  await respond(event, response);
 };
